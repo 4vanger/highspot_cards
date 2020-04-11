@@ -1,4 +1,8 @@
 .Card {
+	width: 320px;
+	height: 560px;
+	margin: 10px;
+
 	.img {
 		width: auto;
 		max-height: 463px;
@@ -8,10 +12,5 @@
 		float: right;
 		font-size: 0.75rem;
 		margin-top: 0.5rem;
-	}
-
-	.description {
-		height: 3rem;
-		overflow: hidden;
 	}
 }
