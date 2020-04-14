@@ -1,7 +1,13 @@
 .CardsList {
-	display: flex;
-	flex-flow: row wrap;
-	justify-content: flex-start;
+	.list {
+		display: flex;
+		flex-flow: row wrap;
+		justify-content: flex-start;
+	}
+
+	.search {
+		margin: 1rem;
+	}
 
 	.spinner-grow {
 		position: fixed;

@@ -1,18 +1,100 @@
-import React, { useEffect, useState, useLayoutEffect } from 'react';
+import React, { useEffect, useState, useLayoutEffect, useRef } from 'react';
+import Alert from 'react-bootstrap/Alert';
 import Spinner from 'react-bootstrap/Spinner';
+import InputGroup from 'react-bootstrap/InputGroup';
+import Button from 'react-bootstrap/Button';
+import FormControl from 'react-bootstrap/FormControl';
 
 import { Card } from './Card';
 import './CardsList.scss';
 
-const CARDS_PER_REQUEST = 20;
-const SCROLL_THROTTLE_TIME_MS = 50;
+const CARDS_PER_REQUEST = 20; // How many cards to fetch per request
+const SCROLL_THROTTLE_TIME_MS = 50; // Delay after last scroll has occured
+const SEARCH_TYPING_THROTTLE_TIME_MS = 500; // Delay before fetching results. Bigger value for less responsive but more bandwidth consuming behavior
+const SCROLL_BOTTOM_THRESHOLD = 300; // Distance from the bottom of the page when next portion of cards should be fetched. Bigger value for more user-friendly and traffic-consuming results
 
 export function CardsList() {
 	const [isLoading, setIsLoading] = useState(false);
-	const [cards, setCards] = useState([]);
+	const [cards, setCards] = useState(new Map());
 	const [pageNumber, setPageNumber] = useState(1);
+	const [searchTerm, setSearchTerm] = useState('');
+	const [isEverythingFetched, setIsEverythingFetched] = useState(false);
 
-	useEffect(fetchCards, [pageNumber]);
+	const dataCache = useRef(null);
+
+	useEffect(() => {
+		if (isEverythingFetched) {
+			return;
+		}
+		let cancelled = false;
+		setIsLoading(true);
+		let url = `https://api.elderscrollslegends.io/v1/cards?pageSize=${CARDS_PER_REQUEST}&page=${pageNumber}${
+			searchTerm ? '&name=' + searchTerm : ''
+		}`;
+
+		fetch(url)
+			.then((resp) => {
+				return resp.json();
+			})
+			.then((data) => {
+				if (cancelled) {
+					// something has changed - fetched data should be discarded to avoid race condition
+					return;
+				}
+
+				data.cards.forEach((card) => {
+					// store lowercased name into separate field.
+					// This will speed up future search and it can be expanded later if needed
+					// to include more data to search in
+					card._searchStr = card.name.toLowerCase();
+					cards.set(card.id, card);
+				});
+				setCards(cards);
+				setIsLoading(false);
+
+				if (data._totalCount < CARDS_PER_REQUEST * pageNumber) {
+					setIsEverythingFetched(true);
+				}
+			});
+
+		return () => (cancelled = true);
+	}, [cards, pageNumber, isEverythingFetched, searchTerm]);
+
+	useEffect(() => {
+		if (searchTerm !== '' && dataCache.current === null) {
+			// start search - cache fetched results and prepopulate search from it
+			dataCache.current = {
+				pageNumber: pageNumber,
+				cards: cards,
+				isEverythingFetched: isEverythingFetched,
+			};
+		}
+	}, [searchTerm, cards, pageNumber, isEverythingFetched]);
+
+	useEffect(() => {
+		if (searchTerm !== '') {
+			const filteredCards = new Map();
+			const searchFor = searchTerm.toLowerCase();
+			// prepopulate search from known results
+			dataCache.current.cards.forEach((card) => {
+				if (card._searchStr.indexOf(searchFor) >= 0) {
+					filteredCards.set(card.id, card);
+				}
+			});
+
+			setCards(filteredCards);
+			setPageNumber(1);
+			setIsEverythingFetched(false);
+		}
+
+		if (searchTerm === '' && dataCache.current !== null) {
+			// search cleared - drop search results and restore cached results if any
+			setCards(dataCache.current.cards);
+			setPageNumber(dataCache.current.pageNumber);
+			setIsEverythingFetched(dataCache.current.isEverythingFetched);
+			dataCache.current = null;
+		}
+	}, [searchTerm]);
 
 	useLayoutEffect(() => {
 		let timeoutId;
@@ -38,34 +120,56 @@ export function CardsList() {
 			'.CardsList .Card:last-child'
 		);
 
+		if (!lastCardEl) {
+			return;
+		}
+
 		var elOffset = lastCardEl.offsetTop;
 		var pageOffset = window.pageYOffset + window.innerHeight;
-		if (elOffset - 200 < pageOffset) {
+		if (elOffset - SCROLL_BOTTOM_THRESHOLD < pageOffset) {
 			// load next page
 			setPageNumber(pageNumber + 1);
 		}
 	}
 
-	function fetchCards() {
-		setIsLoading(true);
-		fetch(
-			`https://api.elderscrollslegends.io/v1/cards?pageSize=${CARDS_PER_REQUEST}&page=${pageNumber}`
-		)
-			.then((resp) => {
-				return resp.json();
-			})
-			.then((data) => {
-				setCards([...cards, ...data.cards]);
-				setIsLoading(false);
-			});
+	let typingTimeoutId;
+	function filterCards(ev) {
+		if (typingTimeoutId) {
+			clearTimeout(typingTimeoutId);
+		}
+		const value = ev.target.value;
+		typingTimeoutId = setTimeout(() => {
+			setSearchTerm(value);
+		}, SEARCH_TYPING_THROTTLE_TIME_MS);
 	}
 
 	return (
 		<div className="CardsList">
+			<InputGroup className="search" size="lg">
+				<FormControl
+					placeholder="Search for card"
+					onChange={filterCards}
+				/>
+				<InputGroup.Append>
+					<Button
+						variant="outline-secondary"
+						disabled={searchTerm === ''}
+					>
+						Clear
+					</Button>
+				</InputGroup.Append>
+			</InputGroup>
 			{isLoading && <Spinner animation="grow" />}
-			{cards.map((card) => (
-				<Card card={card} key={card.id} />
-			))}
+			{!isLoading && searchTerm !== '' && cards.size === 0 && (
+				<Alert variant="info">
+					Nothing was found - try shortening your search term.
+				</Alert>
+			)}
+			<div className="list">
+				{Array.from(cards, ([key, card]) => (
+					<Card card={card} key={key} />
+				))}
+			</div>
 		</div>
 	);
 }
