@@ -1,4 +1,10 @@
-import React, { useEffect, useState, useLayoutEffect, useRef } from 'react';
+import React, {
+	useCallback,
+	useEffect,
+	useState,
+	useLayoutEffect,
+	useRef,
+} from 'react';
 import Alert from 'react-bootstrap/Alert';
 import Spinner from 'react-bootstrap/Spinner';
 import InputGroup from 'react-bootstrap/InputGroup';
@@ -21,44 +27,64 @@ export function CardsList() {
 	const [isEverythingFetched, setIsEverythingFetched] = useState(false);
 
 	const dataCache = useRef(null);
+	// fetch data on start
+	// eslint-disbale-next-line
+	useEffect(() => fetchCards({}), []);
+
+	const fetchCards = useCallback(
+		(args) => {
+			if (isEverythingFetched) {
+				return;
+			}
+
+			setIsLoading(true);
+			let url = `https://api.elderscrollslegends.io/v1/cards?pageSize=${CARDS_PER_REQUEST}&page=${pageNumber}${
+				searchTerm ? '&name=' + searchTerm : ''
+			}`;
+
+			fetch(url)
+				.then((resp) => {
+					return resp.json();
+				})
+				.then((data) => {
+					if (args.cancelled) {
+						// something has changed - fetched data should be discarded to avoid race condition
+						return;
+					}
+
+					data.cards.forEach((card) => {
+						// store lowercased name into separate field.
+						// This will speed up future search and it can be expanded later if needed
+						// to include more data to search in
+						card._searchStr = card.name.toLowerCase();
+						cards.set(card.id, card);
+					});
+					setCards(cards);
+
+					setIsLoading(false);
+
+					if (data._totalCount < CARDS_PER_REQUEST * pageNumber) {
+						setIsEverythingFetched(true);
+					}
+				});
+		},
+		[cards, isEverythingFetched, searchTerm, pageNumber]
+	);
 
 	useEffect(() => {
-		if (isEverythingFetched) {
+		if (searchTerm === '') {
 			return;
 		}
-		let cancelled = false;
-		setIsLoading(true);
-		let url = `https://api.elderscrollslegends.io/v1/cards?pageSize=${CARDS_PER_REQUEST}&page=${pageNumber}${
-			searchTerm ? '&name=' + searchTerm : ''
-		}`;
+		const args = { cancelled: false };
+		const timeoutId = setTimeout(() => {
+			fetchCards(args);
+		}, SEARCH_TYPING_THROTTLE_TIME_MS);
 
-		fetch(url)
-			.then((resp) => {
-				return resp.json();
-			})
-			.then((data) => {
-				if (cancelled) {
-					// something has changed - fetched data should be discarded to avoid race condition
-					return;
-				}
-
-				data.cards.forEach((card) => {
-					// store lowercased name into separate field.
-					// This will speed up future search and it can be expanded later if needed
-					// to include more data to search in
-					card._searchStr = card.name.toLowerCase();
-					cards.set(card.id, card);
-				});
-				setCards(cards);
-				setIsLoading(false);
-
-				if (data._totalCount < CARDS_PER_REQUEST * pageNumber) {
-					setIsEverythingFetched(true);
-				}
-			});
-
-		return () => (cancelled = true);
-	}, [cards, pageNumber, isEverythingFetched, searchTerm]);
+		return () => {
+			clearTimeout(timeoutId);
+			args.cancelled = true;
+		};
+	}, [fetchCards, searchTerm]);
 
 	useEffect(() => {
 		if (searchTerm !== '' && dataCache.current === null) {
@@ -85,6 +111,7 @@ export function CardsList() {
 			setCards(filteredCards);
 			setPageNumber(1);
 			setIsEverythingFetched(false);
+			setIsLoading(true);
 		}
 
 		if (searchTerm === '' && dataCache.current !== null) {
@@ -132,34 +159,30 @@ export function CardsList() {
 		}
 	}
 
-	let typingTimeoutId;
-	function filterCards(ev) {
-		if (typingTimeoutId) {
-			clearTimeout(typingTimeoutId);
-		}
-		const value = ev.target.value;
-		typingTimeoutId = setTimeout(() => {
-			setSearchTerm(value);
-		}, SEARCH_TYPING_THROTTLE_TIME_MS);
-	}
-
 	return (
 		<div className="CardsList">
 			<InputGroup className="search" size="lg">
 				<FormControl
 					placeholder="Search for card"
-					onChange={filterCards}
+					value={searchTerm}
+					onChange={(ev) => setSearchTerm(ev.target.value)}
 				/>
 				<InputGroup.Append>
 					<Button
 						variant="outline-secondary"
 						disabled={searchTerm === ''}
+						onClick={() => {
+							setSearchTerm('');
+						}}
 					>
 						Clear
 					</Button>
 				</InputGroup.Append>
 			</InputGroup>
 			{isLoading && <Spinner animation="grow" />}
+			{isLoading && cards.size === 0 && (
+				<Alert variant="info">Please wait while searching</Alert>
+			)}
 			{!isLoading && searchTerm !== '' && cards.size === 0 && (
 				<Alert variant="info">
 					Nothing was found - try shortening your search term.
